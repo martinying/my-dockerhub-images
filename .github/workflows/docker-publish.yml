@@ -1,0 +1,80 @@
+name: Docker Build and Push
+
+on:
+  push:
+    branches: [ "main" ]
+    # Only trigger when files in image directories change
+    paths:
+      - 'ubuntu-terraform-gcs-cli/**'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'ubuntu-terraform-gcs-cli/**'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Define the directories that contain Dockerfiles
+        image_dir: [ubuntu-terraform-gcs-cli]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necessary for changed-files detection
+
+      - name: Check if image directory changed
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: ${{ matrix.image_dir }}/**
+
+      - name: 'Authenticate to Google Cloud'
+        if: steps.changed-files.outputs.any_changed == 'true' && github.event_name != 'pull_request'
+        uses: 'google-github-actions/auth@v3'
+        with:
+          #workload_identity_provider format:
+          #projects/{project_id}/locations/global/workloadIdentityPools/{pool_id}/providers/{provider_id}
+          workload_identity_provider: ${{ secrets.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+          #https://storage.cloud.google.com/gafe-mfe-dev-support/manifest.json
+
+      - name: 'Get Secrets from Secret Manager'
+        if: steps.changed-files.outputs.any_changed == 'true' && github.event_name != 'pull_request'
+        id: secrets
+        uses: 'google-github-actions/get-secretmanager-secrets@v2'
+        with:
+          secrets: |-
+            DOCKERHUB_USERNAME:projects/${{ secrets.GCP_PROJECT_ID }}/secrets/DOCKERHUB_USERNAME
+            DOCKERHUB_TOKEN:projects/${{ secrets.GCP_PROJECT_ID }}/secrets/DOCKERHUB_TOKEN
+
+      - name: Log in to Docker Hub
+        if: steps.changed-files.outputs.any_changed == 'true' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ steps.secrets.outputs.DOCKERHUB_USERNAME }}
+          password: ${{ steps.secrets.outputs.DOCKERHUB_TOKEN }}
+#
+#      - name: Extract metadata (tags, labels) for Docker
+#        if: steps.changed-files.outputs.any_changed == 'true'
+#        id: meta
+#        uses: docker/metadata-action@v5
+#        with:
+#          # Use the fetched username for the image path
+#          images: ${{ steps.secrets.outputs.DOCKERHUB_USERNAME }}/${{ matrix.image_dir }}
+#          tags: |
+#            type=ref,event=branch
+#            type=sha,format=short
+#            latest
+#
+#      - name: Build and push Docker image
+#        if: steps.changed-files.outputs.any_changed == 'true'
+#        uses: docker/build-push-action@v5
+#        with:
+#          context: ./${{ matrix.matrix.image_dir }}
+#          push: ${{ github.event_name != 'pull_request' }}
+#          tags: ${{ steps.meta.outputs.tags }}
+#          labels: ${{ steps.meta.outputs.labels }}
